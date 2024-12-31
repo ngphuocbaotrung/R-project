@@ -1,0 +1,352 @@
+---
+title: "R for Big Data"
+author: "NGUYEN Phuoc Bao Trung"
+date: "24/11/2024"
+output:
+  html_document:
+    toc: true
+    toc_depth: 2
+    theme: cerulean
+editor_options: 
+  markdown: 
+    wrap: 72
+---
+
+# Introduction
+
+The Enron scandal, one of the most significant corporate collapses in U.S. history, provides a unique opportunity to analyze internal communications within a large corporation during a time of crisis. This analysis aims to:
+
+-   Explore the most active Enron employees in the email database.
+-   Analyze the roles of different users according to their status.
+-   Examine the temporal dynamics of messages in relation to public
+    events.
+-   Perform a basic analysis of the content of the messages.
+
+This document accompanies a Shiny application that allows interactive
+exploration of the Enron email dataset. Below, we detail the steps of
+the analysis and provide scientific commentary based on statistical
+results. #Code for the Shiny Application and Load Data
+
+``` r
+# Load necessary libraries
+library(shiny)
+library(dplyr)
+library(tidyr)
+library(tidytext)
+library(ggplot2)
+library(lubridate)
+library(stringr)
+
+# Load the Enron data
+rm(list = ls())
+setwd("C:/Users/TRUNG NGUYEN/Downloads")
+load("Enron (1).Rdata")
+
+# Data preprocessing
+# ... (Code as provided in previous sections)
+
+# Define UI
+ui <- fluidPage(
+  # ... (UI code as provided)
+)
+
+# Define server logic
+server <- function(input, output) {
+  # ... (Server code as provided)
+}
+
+# Run the application
+shinyApp(ui = ui, server = server)
+```
+
+# Load the Enron data
+
+rm(list = ls()) setwd("C:/Users/TRUNG NGUYEN/Downloads") load("Enron
+(1).Rdata")
+
+``` r
+# Load necessary libraries
+library(shiny)
+library(dplyr)
+library(tidyr)
+library(tidytext)
+library(ggplot2)
+library(lubridate)
+library(stringr)
+
+# Load the Enron data
+rm(list = ls())
+setwd("C:/Users/TRUNG NGUYEN/Downloads")
+load("Enron (1).Rdata")
+```
+
+# Explore data Structure
+
+``` r
+# View the structure of the datasets
+str(employeelist)
+str(message)
+str(recipientinfo)
+str(referenceinfo)
+```
+
+Noted: The employeelist contains information about employees, including their status and email addresses. The message dataset contains email metadata such as sender, date, and subject. The recipientinfo and referenceinfo datasets provide additional details about email recipients and references within emails. 
+
+# Missing Value and Data Cleaning 
+I check for missing values and handle them appropriately.
+
+``` r
+# Count missing values
+colSums(is.na(employeelist))
+colSums(is.na(message))
+colSums(is.na(recipientinfo))
+colSums(is.na(referenceinfo))
+```
+
+Noted: Handling missing values is crucial to ensure the accuracy of our analysis. I find that the status column in employeelist has some "N/A" values, which we replace with "Unknown".
+
+``` r
+# Replace "N/A" with "Unknown" in employeelist status
+employeelist <- employeelist %>%
+  mutate(status = recode(status, "N/A" = "Unknown")) %>%
+  mutate(status = replace_na(status, "Unknown"))
+```
+
+# Improve quality and Merging Data
+
+I reshape the employeelist to gather all email addresses into a single column and then merge it with the message dataset.
+
+``` r
+# Reshape employeelist
+employee_long <- employeelist %>%
+  pivot_longer(cols = starts_with("Email"), 
+               names_to = "EmailType", 
+               values_to = "Email") %>%
+  filter(!is.na(Email) & Email != "")
+
+# Merge with message data
+merged_table_employeemessage <- left_join(
+  employee_long, 
+  message, 
+  by = c("Email" = "sender")
+)
+```
+
+Create a final table containing relevant information
+
+``` r
+emp_mess_table_final <- merged_table_employeemessage %>%
+  select(firstName, lastName, status, Email, mid, date, message_id, subject) %>% 
+  distinct() %>%
+  mutate(fullname = paste(lastName, firstName, sep = " "))
+```
+
+Filter messages sent between 1999 and 2002.(because many emails have
+value in year 0001 and 2044 =\> this is an quality issue)
+
+``` r
+start_date <- as.Date("1999-01-01")
+end_date <- as.Date("2002-12-31")
+emp_mess_table_final <- emp_mess_table_final %>%
+  filter(date >= start_date & date <= end_date)
+```
+
+Noted: Focusing on this date range allows us to analyze communications during a critical period leading up to and following the Enron scandal.
+
+#Exploration of the Most Active Enron Employees 
+I identify the most active employees with their roles based on the number of emails sent.
+
+``` r
+# Identify top active employees
+active_employees <- emp_mess_table_final %>%
+  group_by(fullname, status) %>%            
+  summarise(Email_count = n()) %>% 
+  arrange(desc(Email_count))
+
+# Display top 10 active employees
+head(active_employees, 10)
+```
+
+Table: Top 10 Active Employees
+
+``` r
+library(knitr)
+kable(head(active_employees, 10), caption = "Top 10 Active Employees")
+```
+
+Plot: Top 10 Active Employees
+
+``` r
+ggplot(head(active_employees, 10), aes(x = reorder(fullname, Email_count), y = Email_count, fill = status)) +
+  geom_col() +
+  coord_flip() +
+  labs(title = "Top 10 Active Employees",
+       x = "Employee",
+       y = "Number of Emails Sent",
+       fill = "Status") +
+  theme_minimal()
+```
+
+Scientific Commentary:
+-   Based on the top 10 active employees who send emails, I found that only Kean Steven, Vice President, and Kaminski Vince, Manager, hold management positions among the most active email senders.
+
+-   The majority of the data consists of employees with unknown roles. The most active employee is Jeff Dasovich, who has sent over 6,000 emails in the past two years. Additionally, two individuals with unknown roles appear in the top five of this list. 
+
+-    This raises concerns about the significance of these employees or unknown individuals within the company and the departments they belong to. It also makes me wonder whether they had any impact on the company’s bankruptcy. 
+
+#Analysis of User Roles According to Their Status
+
+I analyze the number of emails sent by employees in different roles.
+
+``` r
+# Emails sent by role
+  emails_by_role <- reactive({
+    emp_mess_table_final %>%
+      filter(status %in% input$selected_roles) %>%
+      group_by(status) %>%
+      summarise(Emails_Sent = n()) %>%
+      arrange(desc(Emails_Sent))
+  })
+  
+# Display emails sent by role
+kable(emails_sent_by_role, caption = "Emails Sent by Role")
+
+# Plot emails sent by role
+ggplot(emails_sent_by_role, aes(x = reorder(status, Emails_Sent), y = Emails_Sent)) +
+  geom_col(fill = "coral") +
+  coord_flip() +
+  labs(title = "Emails Sent by Role",
+       x = "Role",
+       y = "Number of Emails Sent") +
+  theme_minimal()
+
+# Employee counts by role
+  employees_by_role <- reactive({
+    employeelist %>%
+      group_by(status) %>%
+      summarize(Employee_Count = n()) %>%
+      ungroup()
+  output$employeesCountTable <- renderTable({
+    employees_by_role()
+  })
+  
+  output$employeesCountPlot <- renderPlot({
+    ggplot(employees_by_role(), aes(x = reorder(status, Employee_Count), y = Employee_Count)) +
+      geom_col(fill = "steelblue") +
+      coord_flip() +
+      labs(title = "Number of Employees by Role",
+           x = "Role",
+           y = "Number of Employees") +
+      theme_minimal()
+  })
+```
+
+Scientific Commentary:
+-   Within two years, the Company changed 4 CEOs, 3 Managing Directors, and 4 Presidents. This is a signal of the company's instability during the period 1999-2001.
+-   Moreover, there is a concern about the number of employees: There is only one in-house lawyer, but there are 13 traders in the company. 
+-   Another point is in-house lawyer has over 700 emails which is the lowest number of email by positon
+=> The quick changing of the top level in the Company reflect on the issue about the performance of them. Moreover, I guess the BOD of the Company had not seek advice from the in-house lawyer in some business decision. 
+
+#Analysis of the Temporal Dynamics of Messages I examine email activity
+over time, particularly around significant public events related to the
+Enron scandal.
+
+``` r
+# Define significant events
+events <- data.frame(
+  date = as.Date(c("1999-11-29", "2001-08-14", "2001-10-16", 
+                   "2001-10-22", "2001-11-08", "2001-12-02")),
+  event = c("EnronOnline Launch", "CEO Resigns", "Announces Loss", 
+            "SEC Inquiry Begins", "Earnings Restated", "Bankruptcy Filed")
+)
+# Emails sent over time
+emails_by_day <- emp_mess_table_final %>%
+  group_by(date) %>%
+  summarise(emails_sent = n())
+  
+# Plot emails over time
+ggplot(emails_by_day, aes(x = date, y = emails_sent)) +
+  geom_line(color = "blue") +
+  labs(title = "Emails Sent Over Time",
+       x = "Date",
+       y = "Number of Emails Sent") +
+  theme_minimal()
+```
+
+Overlaying Significant Events
+
+``` r
+ggplot() +
+  geom_line(data = emails_by_day, aes(x = date, y = emails_sent), color = "blue") +
+  geom_vline(data = events, aes(xintercept = date), linetype = "dashed", color = "red") +
+  geom_text(data = events, aes(x = date, y = max(emails_by_day$emails_sent), label = event),
+            angle = 90, vjust = -0.5, hjust = 0, size = 3, color = "red") +
+  labs(title = "Emails Over Time with Significant Events",
+       x = "Date",
+       y = "Number of Emails Sent") +
+  theme_minimal()
+```
+Scientific Commentary:
+- There are noticeable spikes in email activity around key events, such as the CEO's resignation and the bankruptcy filing
+
+- Increased communication may reflect organizational responses to crises, internal coordination, or dissemination of information.
+
+- Temporal patterns in email activity can provide insights into how organizations react to significant events.
+
+#Basic Analysis of the Content of Messages I perform a basic content
+
+analysis of email subjects to identify common themes and sentiments.
+Frequency Analysis of Words in Subjects
+
+``` r
+# Tokenize subject words
+subject_words <- emp_mess_table_final %>%
+  unnest_tokens(word, subject)
+
+# Remove stop words
+data("stop_words")
+subject_words <- subject_words %>%
+  anti_join(stop_words, by = "word")
+
+# Count word frequencies
+word_counts <- subject_words %>%
+  count(word, sort = TRUE)
+
+# Display top words
+kable(head(word_counts, 20), caption = "Top 20 Words in Email Subjects")
+
+# Plot top words
+ggplot(head(word_counts, 20), aes(x = reorder(word, n), y = n)) +
+  geom_col(fill = "purple") +
+  coord_flip() +
+  labs(title = "Top 20 Words in Email Subjects",
+       x = "Word",
+       y = "Frequency") +
+  theme_minimal()
+```
+
+Scientific Commentary:
+
+-   Common words include "FW", "re", "meeting", "agreement", suggesting frequent forwarding, replies, and discussions about meetings and agreements. 
+
+-   The prevalence of these terms indicates a focus on coordination and communication about business dealings.
+
+#Conclusion Through this analysis, we've gained insights into the
+communication patterns within Enron during a critical period. Key findings include:
+
+-   Active employees: Among the top 10 active email senders, only Kean Steven (Vice President) and Kaminski Vince (Manager) hold management positions. The majority are employees with unknown roles, including Jeff Dasovich, the most active sender with over 6,000 emails in two years. The prominence of individuals with unknown roles raises questions about their significance within the company and potential impact on Enron's bankruptcy.
+
+-   Role Analysis: Employees' statuses significantly influenced their level of communication, with higher-ranking roles sending more emails.
+
+-   Temporal Dynamics: Email activity correlated with significant events, suggesting increased communication during times of crisis.
+
+-   Content Analysis: Common themes revolved around meetings, agreements, and coordination, indicating routine business operations. Personal Scientific Comments:
+
+-   Organizational Communication: The analysis underscores the importance of communication within an organization, especially during periods of instability. The patterns observed may reflect efforts to manage the crisis internally.
+
+-   Data Limitations: While the dataset provides valuable insights, it's important to consider limitations such as missing data, potential biases, and the absence of email content beyond subjects and references.Mpreover, the current data lacks some points such as department of employees.
+
+# References
+
+Enron Email Dataset: Enron Email Dataset 
+Tidytext Package: Text Mining with R Shiny Package: Building Web Applications in R
